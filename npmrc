@@ -1,0 +1,15 @@
+registry=https://registry.npmjs.org/
+
+# Reintenta las descargas cuando la conexión es inestable.
+fetch-retries=5
+fetch-retry-factor=2
+fetch-retry-mintimeout=10000
+fetch-retry-maxtimeout=120000
+fetch-timeout=300000
+
+# Evita solicitudes adicionales que no son necesarias para instalar.
+audit=false
+fund=false
+
+# Usa la caché cuando sea posible, pero verifica el registro si hace falta.
+prefer-online=true
