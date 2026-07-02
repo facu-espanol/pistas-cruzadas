@@ -42,6 +42,7 @@
   let lobbyTimerEnabled = true;
   let selectedCardId = '';
   let clueText = '';
+  let confirmedCell = null;
 
   $: room = snapshot?.room ?? null;
   $: players = snapshot?.players ?? [];
@@ -129,6 +130,13 @@
 
     const fresh = await loadSnapshot(currentRoomId, user.id);
     snapshot = fresh;
+
+    if (
+      confirmedCell &&
+      !fresh.cards.some((card) => card.id === confirmedCell.cardId && card.status === 'correct')
+    ) {
+      confirmedCell = null;
+    }
 
     const freshHand = fresh.cards.filter(
       (card) => card.owner_player_id === fresh.currentPlayer?.id && card.status === 'hand'
@@ -260,7 +268,7 @@
   }
 
   async function answerCell(rowIndex, colIndex) {
-    if (!canAnswer || answerSending || !activeCard) return;
+    if (!canAnswer || answerSending || !activeCard || correctCardAt(rowIndex, colIndex)) return;
 
     answerSending = true;
     error = '';
@@ -268,6 +276,9 @@
 
     try {
       const wasCorrect = await submitGuess(activeCard.id, rowIndex, colIndex);
+      confirmedCell = wasCorrect
+        ? { cardId: activeCard.id, row: Number(rowIndex), col: Number(colIndex), clue: activeCard.clue }
+        : null;
       notice = wasCorrect
         ? `¡Correcto! ${coordinate(rowIndex, colIndex)} queda en la grilla.`
         : `No era ${coordinate(rowIndex, colIndex)}. La tarjeta se descartó.`;
@@ -314,12 +325,23 @@
     return target ? room?.column_words?.[target.target_col] ?? '—' : '—';
   }
 
-  function correctCardAt(rowIndex, colIndex) {
+  function solvedCardAt(rowIndex, colIndex) {
+    if (
+      confirmedCell &&
+      confirmedCell.row === Number(rowIndex) &&
+      confirmedCell.col === Number(colIndex)
+    ) {
+      return {
+        id: confirmedCell.cardId,
+        clue: confirmedCell.clue ?? 'Acertada'
+      };
+    }
+
     const correctGuess = guesses.find(
       (guess) =>
         guess.is_correct === true &&
-        Number(guess.selected_row) === rowIndex &&
-        Number(guess.selected_col) === colIndex
+        Number(guess.selected_row) === Number(rowIndex) &&
+        Number(guess.selected_col) === Number(colIndex)
     );
 
     if (!correctGuess) return null;
@@ -328,6 +350,27 @@
 
     return {
       id: correctGuess.card_id,
+      clue: card?.clue ?? 'Acertada'
+    };
+  }
+
+  function correctCardAt(rowIndex, colIndex) {
+    const solvedFromGuess = solvedCardAt(rowIndex, colIndex);
+    if (solvedFromGuess) return solvedFromGuess;
+
+    const solvedTarget = targets.find(
+      (target) =>
+        Number(target.target_row) === Number(rowIndex) &&
+        Number(target.target_col) === Number(colIndex) &&
+        cards.some((card) => card.id === target.card_id && card.status === 'correct')
+    );
+
+    if (!solvedTarget) return null;
+
+    const card = cards.find((candidate) => candidate.id === solvedTarget.card_id);
+
+    return {
+      id: solvedTarget.card_id,
       clue: card?.clue ?? 'Acertada'
     };
   }
@@ -567,18 +610,23 @@
 
         {#if lastGuess && lastResolvedCard}
           <div class:success={lastGuess.is_correct} class:error-result={!lastGuess.is_correct} class="last-result card">
-            <div class="result-icon">{lastGuess.is_correct ? '✓' : '×'}</div>
-            <div>
+            <div class="result-coordinate">
+              <small>Intento</small>
+              <strong>{coordinate(lastGuess.selected_row, lastGuess.selected_col)}</strong>
+            </div>
+            <div class="result-copy">
+              <span>{playerName(lastGuess.player_id)} respondió</span>
               <strong>
                 {lastGuess.is_correct
-                  ? `${coordinate(lastGuess.selected_row, lastGuess.selected_col)} fue correcta`
-                  : `${coordinate(lastGuess.selected_row, lastGuess.selected_col)} fue incorrecta`}
+                  ? 'La respuesta fue correcta'
+                  : 'La respuesta fue incorrecta'}
               </strong>
               <span>
-                “{lastResolvedCard.clue}” · respondió {playerName(lastGuess.player_id)}.
+                Pista: “{lastResolvedCard.clue}”.
                 {lastGuess.is_correct ? ' La tarjeta quedó en la grilla.' : ' La tarjeta se perdió.'}
               </span>
             </div>
+            <div class="result-icon">{lastGuess.is_correct ? '✓' : '×'}</div>
           </div>
         {/if}
 
@@ -967,12 +1015,69 @@
   .game-stats strong { font-size: 1.35rem; margin-top: 0.1rem; }
   .game-stats .urgent { border-color: #dc2626; color: #dc2626; }
 
-  .last-result { padding: 0.9rem 1rem; display: flex; align-items: center; gap: 0.85rem; }
-  .last-result.success { border-color: #86efac; background: #f0fdf4; }
-  .last-result.error-result { border-color: #fca5a5; background: #fef2f2; }
-  .result-icon { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: white; font-size: 1.4rem; font-weight: 900; }
-  .last-result strong, .last-result span { display: block; }
-  .last-result span { color: #52525b; margin-top: 0.15rem; }
+  .last-result {
+    padding: 1rem;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
+    border-width: 2px;
+  }
+  .last-result.success { border-color: #16a34a; background: #dcfce7; box-shadow: 0 18px 42px rgba(22, 163, 74, 0.14); }
+  .last-result.error-result { border-color: #dc2626; background: #fee2e2; box-shadow: 0 18px 42px rgba(220, 38, 38, 0.12); }
+  .result-coordinate {
+    width: 108px;
+    min-height: 92px;
+    border-radius: 16px;
+    background: white;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    border: 1px solid rgba(24, 24, 27, 0.08);
+  }
+  .result-coordinate small {
+    color: #71717a;
+    font-size: 0.72rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .result-coordinate strong {
+    font-size: 2.8rem;
+    line-height: 1;
+    margin-top: 0.2rem;
+  }
+  .result-copy { min-width: 0; }
+  .result-copy strong, .result-copy span { display: block; }
+  .result-copy > span:first-child {
+    color: #52525b;
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .result-copy strong {
+    font-size: clamp(1.35rem, 3vw, 2.1rem);
+    line-height: 1.05;
+    margin: 0.12rem 0 0.25rem;
+    overflow-wrap: anywhere;
+  }
+  .result-copy > span:last-child {
+    color: #3f3f46;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .result-icon {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: white;
+    font-size: 2rem;
+    font-weight: 900;
+    border: 1px solid rgba(24, 24, 27, 0.08);
+  }
 
   .play-columns { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 1rem; align-items: start; }
   .board-card { min-width: 0; }
@@ -1072,6 +1177,10 @@
     .game-stats strong { font-size: 1.05rem; }
     .board-card, .hand-card { padding: 0.8rem; border-radius: 18px; }
     .active-clue-banner strong { font-size: 2.4rem; }
-    .last-result { align-items: flex-start; }
+    .last-result { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; }
+    .result-coordinate { width: auto; min-height: 76px; }
+    .result-coordinate strong { font-size: 2.25rem; }
+    .result-copy { grid-column: 1 / -1; }
+    .result-icon { width: 46px; height: 46px; font-size: 1.55rem; }
   }
 </style>
