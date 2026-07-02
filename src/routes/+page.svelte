@@ -355,9 +355,24 @@
   }
 
   function correctCardAt(rowIndex, colIndex) {
+    const solvedFromCard = cards.find(
+      (card) =>
+        card.status === 'correct' &&
+        Number(card.guessed_row) === Number(rowIndex) &&
+        Number(card.guessed_col) === Number(colIndex)
+    );
+
+    if (solvedFromCard) {
+      return {
+        id: solvedFromCard.id,
+        clue: solvedFromCard.clue ?? 'Acertada'
+      };
+    }
+
     const solvedFromGuess = solvedCardAt(rowIndex, colIndex);
     if (solvedFromGuess) return solvedFromGuess;
 
+    // Fallback for the owner of the original card, who can still read its target.
     const solvedTarget = targets.find(
       (target) =>
         Number(target.target_row) === Number(rowIndex) &&
