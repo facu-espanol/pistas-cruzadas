@@ -47,6 +47,10 @@
 
   let heartbeat = null;
 
+  let liveRefresh = null;
+
+  let quietRefreshPromise = null;
+
   let clock = null;
 
   let now = Date.now();
@@ -136,6 +140,8 @@
 
       clearInterval(heartbeat);
 
+      clearInterval(liveRefresh);
+
       clearInterval(clock);
     };
   });
@@ -183,6 +189,8 @@
 
     clearInterval(heartbeat);
 
+    clearInterval(liveRefresh);
+
     currentRoomId = roomId;
 
     localStorage.setItem("pc_room_id", roomId);
@@ -198,6 +206,8 @@
 
       45_000,
     );
+
+    liveRefresh = setInterval(refreshQuietly, 1_000);
   }
 
   async function refresh() {
@@ -236,11 +246,17 @@
   }
 
   function refreshQuietly() {
-    refresh().catch((refreshError) => {
+    if (quietRefreshPromise) return quietRefreshPromise;
+
+    quietRefreshPromise = refresh().catch((refreshError) => {
       console.error(refreshError);
 
       error = refreshError.message;
+    }).finally(() => {
+      quietRefreshPromise = null;
     });
+
+    return quietRefreshPromise;
   }
 
   async function tickClock() {
@@ -338,6 +354,10 @@
     clearInterval(heartbeat);
 
     heartbeat = null;
+
+    clearInterval(liveRefresh);
+
+    liveRefresh = null;
 
     localStorage.removeItem("pc_room_id");
 

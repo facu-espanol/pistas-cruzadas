@@ -276,6 +276,17 @@ export function subscribeToRoom(roomId, onChange) {
       changed
     )
 
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'room_events',
+        filter: `room_id=eq.${roomId}`
+      },
+      changed
+    )
+
     .subscribe((status, error) => {
       if (status === 'CHANNEL_ERROR' && error) {
         console.error('Error de Realtime:', error);
