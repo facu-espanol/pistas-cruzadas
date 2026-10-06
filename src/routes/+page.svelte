@@ -8,6 +8,7 @@
   import { isSupabaseConfigured } from "$lib/supabase.js";
 
   import {
+    broadcastRoomChange,
     createRoom,
     initializeUser,
     joinRoom,
@@ -406,6 +407,8 @@
 
     try {
       const wasCorrect = await submitGuess(activeCard.id, rowIndex, colIndex);
+
+      await broadcastRoomChange(room.id, "guess-submitted");
 
       confirmedCell = wasCorrect
         ? {

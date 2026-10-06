@@ -109,6 +109,8 @@ export async function touchPlayer(roomId) {
   });
 }
 
+const roomChannels = new Map();
+
 export async function loadSnapshot(roomId, userId) {
   const client = requireClient();
 
@@ -216,7 +218,19 @@ export function subscribeToRoom(roomId, onChange) {
   };
 
   const channel = client
-    .channel(`room-${roomId}-${crypto.randomUUID()}`)
+    .channel(`room-${roomId}`, {
+      config: {
+        broadcast: { self: false }
+      }
+    })
+
+    .on(
+      'broadcast',
+      {
+        event: 'room-changed'
+      },
+      changed
+    )
 
     .on(
       'postgres_changes',
@@ -268,8 +282,31 @@ export function subscribeToRoom(roomId, onChange) {
       }
     });
 
+  roomChannels.set(roomId, channel);
+
   return () => {
     clearTimeout(timer);
+    roomChannels.delete(roomId);
     client.removeChannel(channel);
   };
+}
+
+export async function broadcastRoomChange(roomId, reason = 'updated') {
+  const channel = roomChannels.get(roomId);
+
+  if (!channel) return;
+
+  try {
+    await channel.send({
+      type: 'broadcast',
+      event: 'room-changed',
+      payload: {
+        reason,
+        roomId,
+        sentAt: Date.now()
+      }
+    });
+  } catch (broadcastError) {
+    console.warn('No se pudo avisar el cambio por Realtime:', broadcastError);
+  }
 }
