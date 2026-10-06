@@ -132,7 +132,8 @@ export async function loadSnapshot(roomId, userId) {
     playersResult,
     cardsResult,
     targetsResult,
-    guessesResult
+    guessesResult,
+    placedCardsResult
   ] = await Promise.all([
     client
       .from('players')
@@ -155,7 +156,13 @@ export async function loadSnapshot(roomId, userId) {
       .from('guesses')
       .select('*')
       .eq('room_id', roomId)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }),
+
+    client
+      .from('placed_cards')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('placed_at', { ascending: true })
   ]);
 
   if (playersResult.error) {
@@ -183,7 +190,8 @@ export async function loadSnapshot(roomId, userId) {
       players.find((player) => player.user_id === userId) ?? null,
     cards: cardsResult.data ?? [],
     targets: targetsResult.data ?? [],
-    guesses: guessesResult.data ?? []
+    guesses: guessesResult.data ?? [],
+    placedCards: placedCardsResult.data ?? []
   };
 }
 
@@ -242,6 +250,17 @@ export function subscribeToRoom(roomId, onChange) {
         event: '*',
         schema: 'public',
         table: 'guesses',
+        filter: `room_id=eq.${roomId}`
+      },
+      changed
+    )
+
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'placed_cards',
         filter: `room_id=eq.${roomId}`
       },
       changed
