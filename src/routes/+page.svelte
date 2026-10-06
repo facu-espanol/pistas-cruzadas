@@ -47,8 +47,6 @@
 
   let heartbeat = null;
 
-  let liveRefresh = null;
-
   let quietRefreshPromise = null;
 
   let clock = null;
@@ -86,6 +84,38 @@
   $: guesses = snapshot?.guesses ?? [];
 
   $: placedCards = snapshot?.placedCards ?? [];
+
+  $: placedCardLookup = buildPlacedCardLookup(
+    placedCards,
+    confirmedCell,
+    cards,
+    guesses,
+    targets,
+  );
+
+  $: boardRenderKey = [
+    room?.id ?? "",
+    room?.active_card_id ?? "",
+    placedCards
+      .map(
+        (card) =>
+          `${card.card_id}:${card.target_row}:${card.target_col}:${card.clue ?? ""}`,
+      )
+      .join(","),
+    cards
+      .filter((card) => card.status === "correct")
+      .map((card) => `${card.id}:${card.guessed_row}:${card.guessed_col}`)
+      .join(","),
+    guesses
+      .map(
+        (guess) =>
+          `${guess.id}:${guess.selected_row}:${guess.selected_col}:${guess.is_correct}`,
+      )
+      .join(","),
+    confirmedCell
+      ? `${confirmedCell.cardId}:${confirmedCell.row}:${confirmedCell.col}`
+      : "",
+  ].join("|");
 
   $: isHost = Boolean(room && user && room.host_user_id === user.id);
 
@@ -140,8 +170,6 @@
 
       clearInterval(heartbeat);
 
-      clearInterval(liveRefresh);
-
       clearInterval(clock);
     };
   });
@@ -189,8 +217,6 @@
 
     clearInterval(heartbeat);
 
-    clearInterval(liveRefresh);
-
     currentRoomId = roomId;
 
     localStorage.setItem("pc_room_id", roomId);
@@ -207,7 +233,6 @@
       45_000,
     );
 
-    liveRefresh = setInterval(refreshQuietly, 1_000);
   }
 
   async function refresh() {
@@ -355,10 +380,6 @@
 
     heartbeat = null;
 
-    clearInterval(liveRefresh);
-
-    liveRefresh = null;
-
     localStorage.removeItem("pc_room_id");
 
     snapshot = null;
@@ -428,8 +449,6 @@
     try {
       const wasCorrect = await submitGuess(activeCard.id, rowIndex, colIndex);
 
-      await broadcastRoomChange(room.id, "guess-submitted");
-
       confirmedCell = wasCorrect
         ? {
             cardId: activeCard.id,
@@ -441,6 +460,8 @@
             clue: activeCard.clue,
           }
         : null;
+
+      broadcastRoomChange(room.id, "guess-submitted");
 
       notice = wasCorrect
         ? `¡Correcto! ${coordinate(rowIndex, colIndex)} queda en la grilla.`
@@ -493,39 +514,47 @@
   }
 
   function placedCardAt(rowIndex, colIndex) {
-    const row = Number(rowIndex);
-    const col = Number(colIndex);
-
-    const publicPlacedCard = placedCards.find(
-      (card) =>
-        Number(card.target_row) === row && Number(card.target_col) === col,
+    return (
+      placedCardLookup.get(placementKey(rowIndex, colIndex)) ?? null
     );
+  }
 
-    if (publicPlacedCard) {
-      return {
-        id: publicPlacedCard.card_id,
-        clue: publicPlacedCard.clue ?? "Acertada",
-      };
+  function placementKey(rowIndex, colIndex) {
+    return `${Number(rowIndex)}:${Number(colIndex)}`;
+  }
+
+  function buildPlacedCardLookup(
+    publicPlacedCards,
+    optimisticCell,
+    allCards,
+    allGuesses,
+    allTargets,
+  ) {
+    const lookup = new Map();
+
+    const setPlacedCard = (row, col, card) => {
+      lookup.set(placementKey(row, col), {
+        id: card.id,
+        clue: card.clue ?? "Acertada",
+      });
+    };
+
+    for (const card of publicPlacedCards) {
+      setPlacedCard(card.target_row, card.target_col, {
+        id: card.card_id,
+        clue: card.clue,
+      });
     }
 
-    // Se muestra al instante para quien acaba de acertar,
-    // incluso antes de que llegue el refresco de Supabase.
-    if (
-      confirmedCell &&
-      Number(confirmedCell.row) === row &&
-      Number(confirmedCell.col) === col
-    ) {
-      return {
-        id: confirmedCell.cardId,
-        clue: confirmedCell.clue ?? "Acertada",
-      };
+    if (optimisticCell) {
+      setPlacedCard(optimisticCell.row, optimisticCell.col, {
+        id: optimisticCell.cardId,
+        clue: optimisticCell.clue,
+      });
     }
 
-    // Fuente principal: una carta marcada como correcta.
-    // Preferimos guessed_row/guessed_col porque no dependen de permisos
-    // sobre las tarjetas secretas. Si no existen, usamos el target revelado.
-    const solvedByCard = cards.find((card) => {
-      if (card.status !== "correct") return false;
+    for (const card of allCards) {
+      if (card.status !== "correct") continue;
 
       if (
         card.guessed_row !== null &&
@@ -533,47 +562,32 @@
         card.guessed_col !== null &&
         card.guessed_col !== undefined
       ) {
-        return (
-          Number(card.guessed_row) === row && Number(card.guessed_col) === col
-        );
+        setPlacedCard(card.guessed_row, card.guessed_col, card);
+
+        continue;
       }
 
-      const target = targetFor(card.id);
+      const target =
+        allTargets.find((candidate) => candidate.card_id === card.id) ?? null;
 
       if (target) {
-        return (
-          Number(target.target_row) === row && Number(target.target_col) === col
-        );
+        setPlacedCard(target.target_row, target.target_col, card);
       }
-
-      return false;
-    });
-
-    if (solvedByCard) {
-      return {
-        id: solvedByCard.id,
-        clue: solvedByCard.clue ?? "Acertada",
-      };
     }
 
-    // Respaldo extra: una respuesta correcta ya registrada.
-    const solvedByGuess = guesses.find(
-      (guess) =>
-        guess.is_correct === true &&
-        Number(guess.selected_row) === row &&
-        Number(guess.selected_col) === col,
-    );
+    for (const guess of allGuesses) {
+      if (guess.is_correct !== true) continue;
 
-    if (!solvedByGuess) return null;
+      const card =
+        allCards.find((candidate) => candidate.id === guess.card_id) ?? null;
 
-    const card = cards.find(
-      (candidate) => candidate.id === solvedByGuess.card_id,
-    );
+      setPlacedCard(guess.selected_row, guess.selected_col, {
+        id: guess.card_id,
+        clue: card?.clue,
+      });
+    }
 
-    return {
-      id: solvedByGuess.card_id,
-      clue: card?.clue ?? "Acertada",
-    };
+    return lookup;
   }
 
   function isCoordinatePlaced(rowIndex, colIndex) {
@@ -989,58 +1003,62 @@
             {/if}
 
             <div class="board-scroll">
-              <div
-                class="board"
-                style={`grid-template-columns: minmax(6.5rem, 1fr) repeat(${room.grid_size}, minmax(4.6rem, 1fr));`}
-              >
-                <div class="corner-cell">×</div>
+              {#key boardRenderKey}
+                <div
+                  class="board"
+                  style={`grid-template-columns: minmax(6.5rem, 1fr) repeat(${room.grid_size}, minmax(4.6rem, 1fr));`}
+                >
+                  <div class="corner-cell">×</div>
 
-                {#each room.column_words ?? [] as columnLabel, colIndex}
-                  <div class="axis-cell column-axis">
-                    <span>{letters[colIndex]}</span>
+                  {#each room.column_words ?? [] as columnLabel, colIndex}
+                    <div class="axis-cell column-axis">
+                      <span>{letters[colIndex]}</span>
 
-                    <strong>{columnLabel}</strong>
-                  </div>
-                {/each}
-
-                {#each room.row_words ?? [] as rowLabel, rowIndex}
-                  <div class="axis-cell row-axis">
-                    <span>{rowIndex + 1}</span>
-
-                    <strong>{rowLabel}</strong>
-                  </div>
-
-                  {#each room.column_words ?? [] as _, colIndex}
-                    {@const placedCard = placedCardAt(rowIndex, colIndex)}
-
-                    {#if placedCard}
-                      <div
-                        class="board-cell placed-card"
-                        aria-label={`Carta colocada en ${coordinate(rowIndex, colIndex)}: ${placedCard.clue}`}
-                      >
-                        <small>{coordinate(rowIndex, colIndex)}</small>
-
-                        <strong>{placedCard.clue ?? "Acertada"}</strong>
-
-                        <span>Carta colocada</span>
-                      </div>
-                    {:else}
-                      <button
-                        type="button"
-                        class="board-cell"
-                        class:answerable={canAnswer}
-                        disabled={!canAnswer || answerSending}
-                        on:click={() => answerCell(rowIndex, colIndex)}
-                        aria-label={`Coordenada ${coordinate(rowIndex, colIndex)}`}
-                      >
-                        <small>{coordinate(rowIndex, colIndex)}</small>
-
-                        <span>+</span>
-                      </button>
-                    {/if}
+                      <strong>{columnLabel}</strong>
+                    </div>
                   {/each}
-                {/each}
-              </div>
+
+                  {#each room.row_words ?? [] as rowLabel, rowIndex}
+                    <div class="axis-cell row-axis">
+                      <span>{rowIndex + 1}</span>
+
+                      <strong>{rowLabel}</strong>
+                    </div>
+
+                    {#each room.column_words ?? [] as _, colIndex}
+                      {@const placedCard = placedCardLookup.get(
+                        placementKey(rowIndex, colIndex),
+                      )}
+
+                      {#if placedCard}
+                        <div
+                          class="board-cell placed-card"
+                          aria-label={`Carta colocada en ${coordinate(rowIndex, colIndex)}: ${placedCard.clue}`}
+                        >
+                          <small>{coordinate(rowIndex, colIndex)}</small>
+
+                          <strong>{placedCard.clue ?? "Acertada"}</strong>
+
+                          <span>Carta colocada</span>
+                        </div>
+                      {:else}
+                        <button
+                          type="button"
+                          class="board-cell"
+                          class:answerable={canAnswer}
+                          disabled={!canAnswer || answerSending}
+                          on:click={() => answerCell(rowIndex, colIndex)}
+                          aria-label={`Coordenada ${coordinate(rowIndex, colIndex)}`}
+                        >
+                          <small>{coordinate(rowIndex, colIndex)}</small>
+
+                          <span>+</span>
+                        </button>
+                      {/if}
+                    {/each}
+                  {/each}
+                </div>
+              {/key}
             </div>
           </div>
 
