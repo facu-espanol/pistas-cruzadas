@@ -354,26 +354,39 @@
     };
   }
 
-  function correctCardAt(rowIndex, colIndex) {
-    const solvedFromGuess = solvedCardAt(rowIndex, colIndex);
-    if (solvedFromGuess) return solvedFromGuess;
+function correctCardAt(rowIndex, colIndex) {
+  const solvedCard = cards.find(
+    (card) =>
+      card.status === 'correct' &&
+      Number(card.guessed_row) === rowIndex &&
+      Number(card.guessed_col) === colIndex
+  );
 
-    const solvedTarget = targets.find(
-      (target) =>
-        Number(target.target_row) === Number(rowIndex) &&
-        Number(target.target_col) === Number(colIndex) &&
-        cards.some((card) => card.id === target.card_id && card.status === 'correct')
-    );
-
-    if (!solvedTarget) return null;
-
-    const card = cards.find((candidate) => candidate.id === solvedTarget.card_id);
-
+  if (solvedCard) {
     return {
-      id: solvedTarget.card_id,
-      clue: card?.clue ?? 'Acertada'
+      id: solvedCard.id,
+      clue: solvedCard.clue ?? 'Acertada'
     };
   }
+
+  const correctGuess = guesses.find(
+    (guess) =>
+      guess.is_correct === true &&
+      Number(guess.selected_row) === rowIndex &&
+      Number(guess.selected_col) === colIndex
+  );
+
+  if (!correctGuess) return null;
+
+  const card = cards.find(
+    (candidate) => candidate.id === correctGuess.card_id
+  );
+
+  return {
+    id: correctGuess.card_id,
+    clue: card?.clue ?? 'Acertada'
+  };
+}
 
   function playerName(playerId) {
     return players.find((player) => player.id === playerId)?.display_name ?? 'Jugador';
