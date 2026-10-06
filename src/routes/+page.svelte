@@ -80,6 +80,8 @@
 
   $: guesses = snapshot?.guesses ?? [];
 
+  $: placedCards = snapshot?.placedCards ?? [];
+
   $: isHost = Boolean(room && user && room.host_user_id === user.id);
 
   $: activeCard =
@@ -471,6 +473,18 @@
     const row = Number(rowIndex);
     const col = Number(colIndex);
 
+    const publicPlacedCard = placedCards.find(
+      (card) =>
+        Number(card.target_row) === row && Number(card.target_col) === col,
+    );
+
+    if (publicPlacedCard) {
+      return {
+        id: publicPlacedCard.card_id,
+        clue: publicPlacedCard.clue ?? "Acertada",
+      };
+    }
+
     // Se muestra al instante para quien acaba de acertar,
     // incluso antes de que llegue el refresco de Supabase.
     if (
@@ -485,10 +499,21 @@
     }
 
     // Fuente principal: una carta marcada como correcta.
-    // Usamos su objetivo real en card_targets porque la carta
-    // debe quedar ubicada en su coordenada del juego de mesa.
+    // Preferimos guessed_row/guessed_col porque no dependen de permisos
+    // sobre las tarjetas secretas. Si no existen, usamos el target revelado.
     const solvedByCard = cards.find((card) => {
       if (card.status !== "correct") return false;
+
+      if (
+        card.guessed_row !== null &&
+        card.guessed_row !== undefined &&
+        card.guessed_col !== null &&
+        card.guessed_col !== undefined
+      ) {
+        return (
+          Number(card.guessed_row) === row && Number(card.guessed_col) === col
+        );
+      }
 
       const target = targetFor(card.id);
 
@@ -498,10 +523,7 @@
         );
       }
 
-      // Respaldo por si la base ya guardó guessed_row/guessed_col.
-      return (
-        Number(card.guessed_row) === row && Number(card.guessed_col) === col
-      );
+      return false;
     });
 
     if (solvedByCard) {
@@ -543,61 +565,6 @@
     return isCoordinatePlaced(target.target_row, target.target_col);
   }
 
-  // Alias para evitar errores si quedó alguna referencia vieja.
-  function correctCardAt(rowIndex, colIndex) {
-    // 1. Caso inmediato: el jugador acaba de acertar.
-    if (
-      confirmedCell &&
-      Number(confirmedCell.row) === Number(rowIndex) &&
-      Number(confirmedCell.col) === Number(colIndex)
-    ) {
-      return {
-        id: confirmedCell.cardId,
-        clue: confirmedCell.clue ?? "Acertada",
-      };
-    }
-
-    // 2. Caso principal: carta marcada como correcta.
-    // No dependemos de guessed_row ni guessed_col.
-    // Buscamos la coordenada real en card_targets.
-    const solvedByTarget = cards.find((card) => {
-      if (card.status !== "correct") return false;
-
-      const target = targetFor(card.id);
-      if (!target) return false;
-
-      return (
-        Number(target.target_row) === Number(rowIndex) &&
-        Number(target.target_col) === Number(colIndex)
-      );
-    });
-
-    if (solvedByTarget) {
-      return {
-        id: solvedByTarget.id,
-        clue: solvedByTarget.clue ?? "Acertada",
-      };
-    }
-
-    // 3. Respaldo: si existe un guess correcto, usar esa coordenada.
-    const solvedByGuess = guesses.find(
-      (guess) =>
-        guess.is_correct === true &&
-        Number(guess.selected_row) === Number(rowIndex) &&
-        Number(guess.selected_col) === Number(colIndex),
-    );
-
-    if (!solvedByGuess) return null;
-
-    const card = cards.find(
-      (candidate) => candidate.id === solvedByGuess.card_id,
-    );
-
-    return {
-      id: solvedByGuess.card_id,
-      clue: card?.clue ?? "Acertada",
-    };
-  }
   function playerName(playerId) {
     return (
       players.find((player) => player.id === playerId)?.display_name ??
@@ -1005,30 +972,12 @@
               >
                 <div class="corner-cell">×</div>
 
-                {#each room.column_words ?? [] as _, colIndex}
-                  {@const solvedCard = correctCardAt(rowIndex, colIndex)}
+                {#each room.column_words ?? [] as columnLabel, colIndex}
+                  <div class="axis-cell column-axis">
+                    <span>{letters[colIndex]}</span>
 
-                  <button
-                    type="button"
-                    class="board-cell"
-                    class:solved={Boolean(solvedCard)}
-                    class:answerable={canAnswer && !solvedCard}
-                    disabled={!canAnswer ||
-                      Boolean(solvedCard) ||
-                      answerSending}
-                    on:click={() => answerCell(rowIndex, colIndex)}
-                    aria-label={solvedCard
-                      ? `Coordenada ${coordinate(rowIndex, colIndex)} acertada`
-                      : `Coordenada ${coordinate(rowIndex, colIndex)}`}
-                  >
-                    <small>{coordinate(rowIndex, colIndex)}</small>
-
-                    {#if solvedCard}
-                      <strong>{solvedCard.clue ?? "Acertada"}</strong>
-                    {:else}
-                      <span>+</span>
-                    {/if}
-                  </button>
+                    <strong>{columnLabel}</strong>
+                  </div>
                 {/each}
 
                 {#each room.row_words ?? [] as rowLabel, rowIndex}
@@ -2192,33 +2141,6 @@
     box-shadow: 0 10px 20px rgba(234, 88, 12, 0.15);
   }
 
-  .board-cell.solved,
-  .board-cell.solved:disabled {
-    border: 2px solid #15803d;
-
-    background: #22c55e;
-
-    color: #ffffff;
-
-    opacity: 1 !important;
-
-    cursor: not-allowed;
-
-    pointer-events: none;
-
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.2);
-  }
-
-  .board-cell.solved strong {
-    color: #ffffff;
-
-    overflow-wrap: anywhere;
-  }
-
-  .board-cell.solved small {
-    color: #dcfce7;
-  }
-
   .side-column {
     display: grid;
 
@@ -2603,39 +2525,6 @@
     }
   }
 
-  button.board-cell.solved,
-  button.board-cell.solved:disabled {
-    background: #22c55e !important;
-
-    background-color: #22c55e !important;
-
-    border: 2px solid #15803d !important;
-
-    color: #ffffff !important;
-
-    opacity: 1 !important;
-
-    cursor: not-allowed !important;
-
-    pointer-events: none !important;
-
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.25) !important;
-  }
-
-  button.board-cell.solved small,
-  button.board-cell.solved:disabled small {
-    color: #dcfce7 !important;
-  }
-
-  button.board-cell.solved strong,
-  button.board-cell.solved:disabled strong {
-    color: #ffffff !important;
-
-    font-weight: 900;
-
-    overflow-wrap: anywhere;
-  }
-
   .board-cell.placed-card {
     position: relative;
     border: 2px solid #15803d !important;
@@ -2703,30 +2592,5 @@
     margin-top: 0.45rem;
     font-size: 0.74rem;
     font-weight: 900;
-  }
-  button.board-cell.solved,
-  button.board-cell.solved:disabled {
-    background: #22c55e !important;
-    background-color: #22c55e !important;
-    border: 3px solid #15803d !important;
-    color: #ffffff !important;
-    opacity: 1 !important;
-    cursor: default !important;
-    pointer-events: none !important;
-    box-shadow:
-      0 10px 18px rgba(21, 128, 61, 0.25),
-      inset 0 0 0 2px rgba(255, 255, 255, 0.25) !important;
-  }
-
-  button.board-cell.solved small,
-  button.board-cell.solved:disabled small {
-    color: #dcfce7 !important;
-  }
-
-  button.board-cell.solved strong,
-  button.board-cell.solved:disabled strong {
-    color: #ffffff !important;
-    font-weight: 900;
-    overflow-wrap: anywhere;
   }
 </style>

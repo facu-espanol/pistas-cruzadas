@@ -4,3 +4,4 @@ build
 .DS_Store
 npm-debug.log*
 supabase
+parche_supabase_tarjetas_verdes.sql
