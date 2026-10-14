@@ -1184,8 +1184,7 @@
 
               <p>
                 Pueden debatir por voz, pero solo una persona debe tocar la
-                casilla acordada. No se puede cambiar: el primer clic aceptado
-                por Supabase decide la tarjeta.
+                casilla acordada. No se puede cambiar: el primer clic que haga el equipo es la respuesta final.
               </p>
             </div>
           </aside>
